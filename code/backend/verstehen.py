@@ -1,12 +1,12 @@
 """Anfrage verstehen: LLM-Parameterextraktion mit festem Schema + Regeln, die den Originaltext prüfen.
 
 Prinzip: Das LLM schlägt vor, der Text entscheidet (Tage, Datum, Rad, Unterkunft, Stopps, Radweg, Wetter …)."""
-from datetime import date
+from datetime import date, timedelta
 import json
 import radwege
 import re
 
-from daten import POI_KATEGORIEN
+POI_KATEGORIEN = {"fahrradladen": "Fahrradwerkstatt", "verleih": "Fahrradverleih"}
 from konfig import LLM_MODEL, OLLAMA_URL
 
 
@@ -66,24 +66,47 @@ ZAHLWORTE = {"einem": 1, "einen": 1, "eine": 1, "ein": 1, "zwei": 2, "drei": 3, 
 
 
 def tage_im_text(text):
-    """Liefert die im Text genannte Anzahl Tage/Nächte (oder None). Dient als Gegenprobe zum LLM."""
+    """Erkennt ausdrücklich genannte Reisetage."""
     t = text.lower()
+
+    adjektive = {
+        "eintägig": 1,
+        "zweitägig": 2,
+        "dreitägig": 3,
+        "viertägig": 4,
+        "fünftägig": 5,
+        "sechstägig": 6,
+        "siebentägig": 7,
+    }
+
+    for wort, tage in adjektive.items():
+        if re.search(r"\b" + wort + r"\w*", t):
+            return tage
+
     zahl = r"(\d+|" + "|".join(ZAHLWORTE) + r")"
     wert = lambda w: int(w) if w.isdigit() else ZAHLWORTE[w]
-    t = ZEITRAUM.sub(" ", t)  # "in den nächsten 7 Tagen" = Suchzeitraum, keine Tourlänge
-    m = re.search(zahl + r"\s*-?\s*(tage|tagen|tagestour|nächte|nächten|übernachtungen)\b", t)
+
+    t = ZEITRAUM.sub(" ", t)
+
+    m = re.search(
+        zahl + r"\s*-?\s*(tage|tagen|tagestour|nächte|nächten|übernachtungen)\b",
+        t
+    )
     if not m:
-        m = re.search(r"\b" + zahl + r"\s+(tag)\b", t)  # "ein Tag", "an einem Tag"
+        m = re.search(r"\b" + zahl + r"\s+(tag)\b", t)
+
     if m:
         n = wert(m.group(1))
         return n + 1 if m.group(2).startswith(("nächte", "übernachtung")) else n
+
     m = re.search(zahl + r"\s+wochen?\b", t)
     if m:
         return 7 * wert(m.group(1))
+
     if "wochenende" in t:
         return 2
-    return None
 
+    return None
 
 POI_WOERTER = {
     "fahrradladen": ("fahrradwerkstatt", "fahrradladen", "radladen", "werkstatt", "fahrradreparatur", "reparatur",
@@ -230,9 +253,71 @@ def wetter_suche_im_text(text):
 
 
 
+
+def datum_im_text(text, heute=None):
+    """Relative Datumsangaben unabhängig vom LLM berechnen."""
+    heute = heute or date.today()
+    t = text.lower()
+
+    if re.search(r"\bübermorgen\b", t):
+        return (heute + timedelta(days=2)).isoformat()
+
+    if re.search(r"\bmorgen\b", t):
+        return (heute + timedelta(days=1)).isoformat()
+
+    wochentage = {
+        "montag": 0, "dienstag": 1, "mittwoch": 2,
+        "donnerstag": 3, "freitag": 4,
+        "samstag": 5, "sonntag": 6,
+    }
+
+    for name, nummer in wochentage.items():
+        muster = r"\b(?:nächsten|kommenden)\s+" + name + r"\b"
+        if re.search(muster, t):
+            abstand = (nummer - heute.weekday()) % 7
+            if abstand == 0:
+                abstand = 7
+            return (heute + timedelta(days=abstand)).isoformat()
+
+    return None
+
+
+def zwischenziele_aus_anfrage(text):
+    """Zwischenziel zwischen 'über' und 'nach' erkennen."""
+    muster = (
+        r"\büber\s+([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*)"
+        r"\s+nach\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*"
+    )
+    m = re.search(muster, text, re.IGNORECASE)
+    return [m.group(1)] if m else []
+
+
 def plausibilisieren(params, text):
     """Korrigiert typische Fehler kleiner LLMs anhand des Originaltexts."""
     t = text.lower()
+
+    datum = datum_im_text(text)
+    if datum:
+        params["startdatum"] = datum
+
+    zwischenziele = zwischenziele_aus_anfrage(text)
+    if zwischenziele:
+        params["zwischenziele"] = zwischenziele
+
+    # Fahrradtyp ausschließlich aus ausdrücklicher Angabe ableiten
+    radtypen = [
+        (r"\b(gravelbike|gravelrad|gravel)\b", "gravel"),
+        (r"\b(rennrad|rennräder)\b", "rennrad"),
+        (r"\b(mountainbike|mtb)\b", "mtb"),
+        (r"\b(e-bike|ebike|pedelec)\b", "ebike"),
+    ]
+
+    params["fahrrad"] = "normal"
+    for muster, radtyp in radtypen:
+        if re.search(muster, t):
+            params["fahrrad"] = radtyp
+            break
+
     tage_text = tage_im_text(text)
     if tage_text or params.get("tage"):
         params["tage"] = tage_text  # Text ist maßgeblich (LLM erfindet z. B. Tage aus "100 km am Tag")
@@ -281,8 +366,132 @@ GRUPPEN_WOERTER = ("kind", "familie", "sohn", "tochter", "sportlich", "schnell",
 RAD_WOERTER = ("gravel", "rennrad", "mountainbike", "mtb", "e-bike", "ebike", "pedelec", "trekkingrad", "normalen rad", "normales rad", "citybike")
 
 
+
+
+def schnell_aendern(text, vorher):
+    """Eindeutige Ortsänderungen ohne Ollama bearbeiten."""
+    if not vorher:
+        return None
+
+    t = text.strip()
+
+    # Eindeutige Zieländerung
+    m = re.fullmatch(
+        r"doch\s+nach\s+([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*)\s+statt\s+"
+        r"([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*)[.!]?",
+        t, re.IGNORECASE
+    )
+    if m and _gleich(m.group(2), vorher.get("ziel")):
+        p = dict(vorher)
+        p["ziel"] = m.group(1)
+        p["wegpunkte"] = None
+        p["via_pois"] = []
+        p["uebernachtungen"] = []
+        return p
+
+    # Kinder zur bestehenden Tour hinzufügen
+    if re.fullmatch(r"wir\s+nehmen\s+die\s+kinder\s+mit[.!]?", t, re.IGNORECASE):
+        p = dict(vorher)
+        p["zielgruppe"] = "familie"
+        return p
+
+    # Neue Tour mit ausdrücklich genanntem Start und Ziel
+    m = re.fullmatch(
+        r"neue\s+tour\s*:\s*von\s+"
+        r"([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*)\s+nach\s+"
+        r"([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*)[.!]?",
+        t, re.IGNORECASE
+    )
+    if m:
+        p = {k: None for k in KONTEXT_FELDER}
+        p.update(
+            start=m.group(1),
+            ziel=m.group(2),
+            zwischenziele=[],
+            zielgruppe="normal",
+            fahrrad="normal",
+            unterkunft_typ=[],
+            poi_wuensche=[],
+            bahnhoefe_zeigen=False,
+        )
+        return plausibilisieren(p, text)
+
+    wort = r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*"
+    ort = rf"{wort}(?:\s+(?:am|an|der|den|im|in|bei|{wort}))*"
+
+    # Mehrdeutige Begriffe niemals als Ortsnamen interpretieren.
+    keine_orte = {
+        "asphalt", "schotter", "umwege", "verkehr",
+        "autobahn", "straßen", "strassen", "berge",
+        "steigungen", "regen", "wind", "campingplatz",
+        "campingplätze", "pausen"
+    }
+
+    def gueltiger_ort(name):
+        return name.strip().lower() not in keine_orte
+
+    def vorhanden(name):
+        return any(
+            _gleich(name, z)
+            for z in (vorher.get("zwischenziele") or [])
+        )
+
+    # Ziel ändern
+    m = re.fullmatch(
+        rf"Fahre stattdessen nach ({ort})\.",
+        t, re.IGNORECASE
+    )
+    if m and gueltiger_ort(m.group(1)):
+        return aendern(vorher, dict(vorher), t)
+
+    # Start ändern
+    m = re.fullmatch(
+        rf"Starte lieber in ({ort})\.",
+        t, re.IGNORECASE
+    )
+    if m and gueltiger_ort(m.group(1)):
+        return aendern(vorher, dict(vorher), t)
+
+    # Zwischenziel hinzufügen
+    m = re.fullmatch(
+        rf"Fahre (?:lieber|zusätzlich) über ({ort})\.",
+        t, re.IGNORECASE
+    )
+    if m and gueltiger_ort(m.group(1)):
+        return aendern(vorher, dict(vorher), t)
+
+    # Zwischenziel entfernen
+    m = re.fullmatch(
+        rf"Fahre (?:nicht mehr über|ohne) ({ort})\.",
+        t, re.IGNORECASE
+    )
+    if m and vorhanden(m.group(1)):
+        return aendern(vorher, dict(vorher), t)
+
+    # Zwischenziel ersetzen
+    m = re.fullmatch(
+        rf"Fahre statt über ({ort}) über ({ort})\.",
+        t, re.IGNORECASE
+    )
+    if (
+        m
+        and vorhanden(m.group(1))
+        and gueltiger_ort(m.group(2))
+    ):
+        return aendern(vorher, dict(vorher), t)
+
+    return None
+
+
 async def extract_params(client, text, vorher=None):
     """Text -> Parameter. Mit `vorher` (aktuelle Planung) wird die Nachricht als Änderung verstanden."""
+
+    # Eindeutige Folgeanfragen direkt verarbeiten, ohne Ollama
+    if vorher:
+        schnell = schnell_aendern(text, vorher)
+        if schnell is not None:
+            return schnell
+
     messages = [{"role": "system", "content": system_prompt()}]
     if vorher:
         aktuell = {k: vorher.get(k) for k in KONTEXT_FELDER}
@@ -309,13 +518,126 @@ def _gleich(a, b):
     return (a or "").strip().lower() == (b or "").strip().lower()
 
 
+
+def ortsaenderungen_im_text(text):
+    """Erkennt einfache Ortsänderungen einschließlich mehrteiliger Ortsnamen."""
+    ergebnis = {}
+
+    wort = r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*"
+    ort = rf"{wort}(?:\s+(?:am|an|der|den|im|in|bei|{wort}))*"
+
+    start = re.search(
+        r"\b(?:starte|starten|start)\s+(?:lieber\s+)?"
+        r"(?:in|ab|von)\s+(" + ort + r")",
+        text, re.IGNORECASE
+    )
+    if start:
+        ergebnis["start"] = start.group(1).strip()
+
+    ziel = re.search(
+        r"\b(?:fahre|fahren|radle|reise)\s+"
+        r"(?:stattdessen\s+|lieber\s+|doch\s+)?"
+        r"nach\s+(" + ort + r")",
+        text, re.IGNORECASE
+    )
+    if ziel:
+        name = ziel.group(1).strip()
+
+        # Anweisungen nach dem Ortsnamen abschneiden
+        name = re.split(
+            r"\s+(?:und|aber|mit|ohne|sowie|für)\s+",
+            name,
+            maxsplit=1,
+            flags=re.IGNORECASE
+        )[0].strip()
+
+        ergebnis["ziel"] = name
+
+    via = re.search(
+        r"\b(?:über|via)\s+(.+?)(?:[.!?]|$)",
+        text
+    )
+    if via:
+        teile = re.split(r"\s*(?:,|\bund\b)\s*", via.group(1))
+        orte = []
+        for teil in teile:
+            teil = teil.strip()
+            if re.fullmatch(ort, teil):
+                orte.append(teil)
+        if orte:
+            ergebnis["zwischenziele"] = orte
+
+    return ergebnis
+
+
+
+def zwischenziele_bearbeiten(text, bisher):
+    """Zwischenziele hinzufügen, entfernen oder ersetzen."""
+    bisher = list(bisher or [])
+    ort = r"[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*(?:\s+(?:am|an|der|den|im|in|bei|[A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]*))*"
+
+    # Entfernen: "nicht mehr über Bingen", "ohne Bingen"
+    entfernen = re.search(
+        r"\b(?:nicht mehr über|ohne)\s+(" + ort + r")",
+        text, re.IGNORECASE
+    )
+    if entfernen:
+        name = entfernen.group(1)
+        return [z for z in bisher if not _gleich(z, name)]
+
+    # Ersetzen: "statt über Bingen über Wiesbaden"
+    ersetzen = re.search(
+        r"\bstatt\s+über\s+(" + ort + r")\s+über\s+(" + ort + r")",
+        text, re.IGNORECASE
+    )
+    if ersetzen:
+        alt, neu = ersetzen.group(1), ersetzen.group(2)
+        return [
+            neu if _gleich(z, alt) else z
+            for z in bisher
+        ]
+
+    # Ergänzen: vorhandene Funktion nutzen
+    orte = ortsaenderungen_im_text(text)
+    genannt = orte.get("zwischenziele")
+
+    if genannt:
+        rest = [
+            z for z in bisher
+            if not any(_gleich(z, n) for n in genannt)
+        ]
+        return genannt + rest
+
+    return bisher
+
+
+
+
+def km_pro_tag_im_text(text):
+    """Explizite Tagesdistanz unabhängig vom LLM erkennen."""
+    muster = [
+        r"\b(\d{1,3})\s*(?:km|kilometer)\s*(?:pro|je|am)\s*tag\b",
+        r"\b(?:pro|je)\s*tag\s*(\d{1,3})\s*(?:km|kilometer)\b",
+    ]
+    for m in muster:
+        treffer = re.search(m, text, re.IGNORECASE)
+        if treffer:
+            km = int(treffer.group(1))
+            if 5 <= km <= 300:
+                return km
+    return None
+
+
 def aendern(vorher, roh, text):
     """Änderung auf die bisherige Planung anwenden. Nur, was der Text belegt, wird geändert (LLM schlägt vor)."""
     t = text.lower()
     neu = plausibilisieren(dict(roh), text)
     # Ganz neue Tour (neuer Start UND neues Ziel): nichts übernehmen
     if neu.get("start") and neu.get("ziel") and not _gleich(neu["start"], vorher.get("start")) \
-            and not _gleich(neu["ziel"], vorher.get("ziel")):
+            and not _gleich(neu["ziel"], vorher.get("ziel")) \
+            and _stamm_im_text(neu["start"], t) \
+            and _stamm_im_text(neu["ziel"], t) \
+            and re.search(r"\b(?:neue[nrs]?\s+(?:tour|route)|(?:tour|route)\s+neu\s+planen)\b", t):
         # LLM hat evtl. Werte aus der alten Planung mitgenommen -> nur behalten, was der Text belegt
         if not any(w in t for ws in UNTERKUNFT_WOERTER.values() for w in ws):
             neu["unterkunft_typ"] = []
@@ -328,10 +650,37 @@ def aendern(vorher, roh, text):
         neu["zwischenziele"] = [z for z in neu.get("zwischenziele") or [] if _stamm_im_text(z, t)]
         return neu
     p = {k: vorher.get(k) for k in KONTEXT_FELDER}
-    p["start"] = neu.get("start") or vorher.get("start")
-    p["ziel"] = neu.get("ziel") or vorher.get("ziel")
-    if neu.get("zwischenziele") or any(w in t for w in ("ohne zwischen", "direkt", "nicht über", "ohne umweg")):
-        p["zwischenziele"] = neu.get("zwischenziele") or []
+    # Bestehende Orte nur bei ausdrücklicher Nennung ändern
+    start_neu = neu.get("start")
+    ziel_neu = neu.get("ziel")
+
+    p["start"] = (
+        start_neu if start_neu and _stamm_im_text(start_neu, t)
+        else vorher.get("start")
+    )
+    p["ziel"] = (
+        ziel_neu if ziel_neu and _stamm_im_text(ziel_neu, t)
+        else vorher.get("ziel")
+    )
+
+    # Ausdrücklich genannte Zwischenorte erkennen
+    via = re.search(
+        r"\b(?:über|via)\s+([A-ZÄÖÜ][A-Za-zÄÖÜäöüß-]+)",
+        text
+    )
+
+    zwischenziele = neu.get("zwischenziele") or []
+    zwischenziele = [
+        z for z in zwischenziele if _stamm_im_text(z, t)
+    ]
+
+    if via:
+        ort = via.group(1)
+        if not any(_gleich(ort, z) for z in zwischenziele):
+            zwischenziele.append(ort)
+
+    if zwischenziele or any(w in t for w in ("ohne zwischen", "direkt", "nicht über", "ohne umweg")):
+        p["zwischenziele"] = zwischenziele
     if tage_im_text(text):
         p["tage"] = tage_im_text(text)
     if re.search(r"\d+\s*(km|kilometer)", t) and neu.get("km_pro_tag"):
@@ -375,6 +724,25 @@ def aendern(vorher, roh, text):
             p["wegpunkte"] = vorher.get("wegpunkte")
     for k in ("wuensche",):
         p[k] = neu.get(k) or vorher.get(k) or []
+    # Explizite Tagesdistanz hat Vorrang vor der KI-Ausgabe
+    km_text = km_pro_tag_im_text(text)
+    if km_text is not None:
+        p["km_pro_tag"] = km_text
+
+    # Explizite Ortsänderungen haben Vorrang vor der KI-Ausgabe
+    orte = ortsaenderungen_im_text(text)
+
+    if "start" in orte:
+        p["start"] = orte["start"]
+
+    if "ziel" in orte:
+        p["ziel"] = orte["ziel"]
+
+    # Zwischenziele gezielt ergänzen, entfernen oder ersetzen
+    p["zwischenziele"] = zwischenziele_bearbeiten(
+        text, vorher.get("zwischenziele")
+    )
+
     return p
 
 
