@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Routify-Karte</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #172d2a; }
+  #map { height: clamp(240px, 55vw, 360px); border-radius: 10px; background: #e9efeb; }
+  footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 8px 2px; }
+  a { color: #08746b; }
+  [hidden] { display: none !important; }
+  @media (prefers-color-scheme: dark) { body { color: #edf4f1; } a { color: #80ddd0; } }
+</style>
+<div id="map" role="region" aria-label="Fahrradroute auf der Karte" hidden></div>
+<footer>
+  <span id="status" role="status">Lade Routify-Karte …</span>
+  <a id="link" target="_blank" rel="noopener noreferrer" hidden>Route in Routify öffnen</a>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const mapElement = document.getElementById("map");
+  const status = document.getElementById("status");
+  const link = document.getElementById("link");
+  const numbers = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1 });
+  let map;
+  let routeLayer;
+  let stationControl;
+  let stationLayer;
+
+  function render(result) {
+    const data = result?.structuredContent;
+    const geometry = data?.route?.geometrie;
+    if (data?.status !== "ok" || geometry?.type !== "LineString" || geometry.coordinates.length < 2) {
+      mapElement.hidden = true;
+      link.hidden = true;
+      status.textContent = data?.rueckfrage || "Keine Route verfügbar.";
+      return;
+    }
+
+    const url = data.routify_url;
+    link.hidden = typeof url !== "string" || !url.startsWith("https://");
+    if (!link.hidden) link.href = url;
+    const unavailable = !window.L;
+    status.textContent = numbers.format(data.route.laenge_km) + " km"
+      + (unavailable ? " · Karte konnte nicht geladen werden." : "");
+    if (unavailable) return;
+
+    mapElement.hidden = false;
+    if (!map) {
+      map = L.map(mapElement, { scrollWheelZoom: false });
+      L.tileLayer("https://sgx.geodatenzentrum.de/wmts_topplus_open/tile/1.0.0/web_grau/default/WEBMERCATOR/{z}/{y}/{x}.png", {
+        maxZoom: 18,
+        attribution: '© <a href="https://gdz.bkg.bund.de">BKG</a> TopPlusOpen'
+      }).addTo(map);
+      routeLayer = L.featureGroup().addTo(map);
+    }
+    routeLayer.clearLayers();
+    stationLayer?.remove();
+    stationControl?.remove();
+    const line = L.geoJSON(geometry, { style: { color: "#007c72", weight: 5 } }).addTo(routeLayer);
+    const coordinates = geometry.coordinates;
+    for (const [point, label, color] of [
+      [coordinates[0], "Start", "#087d54"],
+      [coordinates.at(-1), "Ziel", "#ad403a"]
+    ]) {
+      L.circleMarker([point[1], point[0]], { radius: 7, color: "#fff", fillColor: color, fillOpacity: 1 })
+        .bindTooltip(label).addTo(routeLayer);
+    }
+    const stations = L.layerGroup();
+    for (const group of (data.poi || []).filter(group => group.kategorie === "bahnhof")) {
+      for (const station of group.orte) {
+        const label = document.createElement("span");
+        label.textContent = station.name;
+        L.circleMarker([station.lat, station.lon], { radius: 5, color: "#3949ab", fillOpacity: 0.75 })
+          .bindTooltip(label).addTo(stations);
+      }
+    }
+    if (stations.getLayers().length) {
+      stationLayer = stations.addTo(map);
+      stationControl = L.control.layers({}, { Bahnhöfe: stations }).addTo(map);
+    }
+    map.invalidateSize();
+    map.fitBounds(line.getBounds(), { padding: [20, 20], maxZoom: 15 });
+  }
+
+  function post(method, params, id) {
+    const message = { jsonrpc: "2.0", method, params };
+    if (id !== undefined) message.id = id;
+    window.parent.postMessage(message, "*");
+  }
+
+  window.addEventListener("message", event => {
+    if (event.source !== window.parent || event.data?.jsonrpc !== "2.0") return;
+    const message = event.data;
+    if (message.id === 1 && message.result) {
+      post("ui/notifications/initialized", {});
+    } else if (message.id === 1 && message.error) {
+      status.textContent = "Die Karte konnte nicht initialisiert werden.";
+    } else if (message.method === "ui/notifications/tool-result") {
+      render(message.params);
+    }
+  });
+  new ResizeObserver(() => {
+    post("ui/notifications/size-changed", {
+      width: document.documentElement.clientWidth,
+      height: document.body.scrollHeight
+    });
+  }).observe(document.body);
+  post("ui/initialize", {
+    appInfo: { name: "routify-karte", version: "1.0.0" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }, 1);
+</script>
+</html>
