@@ -2,6 +2,7 @@
 import json
 import os
 from typing import Annotated, Literal
+from urllib.parse import urlencode
 
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
@@ -73,6 +74,7 @@ class Ergebnis(BaseModel):
     status: Literal["ok", "rueckfrage"]
     ontologie_uri: str = ONTOLOGIE_URI
     route: Route | None = None
+    routify_url: str | None = Field(None, description="Direktlink zum Öffnen dieser Planung in Routify. Verwende diese URL für Links zur Route.")
     poi: list[PoiGruppe] = Field(default_factory=list)
     hinweise: list[str] = Field(default_factory=list)
     rueckfrage: str | None = None
@@ -123,8 +125,18 @@ async def fahrradroute_berechnen(
     haupt = plan["alternativen"][0]
     kandidaten = {p["kategorie"]: p["kandidaten"] for p in plan["poi_auswahl"]}
     kandidaten["bahnhof"] = haupt["notausstiege"]
+    query = urlencode({
+        "start": start,
+        "ziel": ziel,
+        "profil": profil,
+        "via": zwischenziele,
+        "vorliebe": vorlieben,
+        "poi": kategorien,
+    }, doseq=True)
+    basis = os.getenv("ROUTIFY_PUBLIC_URL", "https://routify-dev.hack4gdi.de").rstrip("/")
     return Ergebnis(
         status="ok",
+        routify_url=f"{basis}/?{query}",
         route=Route(
             laenge_km=haupt["laenge_km"],
             fahrzeit_h=haupt["fahrzeit_h"],

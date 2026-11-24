@@ -26,7 +26,25 @@ const urlParams = new URLSearchParams(location.search);
 if (urlParams.get("experte") === "1" || urlParams.get("einstellungen") === "1") { expertAn = true; renderExpert(); }  // ?einstellungen=1
 if (["wegtyp", "untergrund"].includes(urlParams.get("farbe"))) setColorMode(urlParams.get("farbe"));  // ?farbe=untergrund
 // Mehrere q-Parameter werden nacheinander gesendet (Demo von Änderungen): ?q=Mainz nach Koblenz&q=lieber 3 Tage
-(async () => { for (const q of urlParams.getAll("q")) await send(q); })();
+const linkOrt = (wert) => (wert || "").trim().slice(0, 160);
+const linkStart = linkOrt(urlParams.get("start"));
+const linkZiel = linkOrt(urlParams.get("ziel"));
+if (linkStart && linkZiel) {
+  const profil = urlParams.get("profil");
+  const kategorien = urlParams.getAll("poi");
+  send(`${linkStart} → ${linkZiel}`, {
+    start: linkStart,
+    ziel: linkZiel,
+    profil: ["trekking", "safety", "fastbike", "gravel", "mtb", "shortest"].includes(profil) ? profil : "trekking",
+    zwischenziele: urlParams.getAll("via").slice(0, 5).map(linkOrt).filter(Boolean),
+    vorlieben: [...new Set(urlParams.getAll("vorliebe"))].filter(v => Object.hasOwn(VORLIEBE_LABEL, v)),
+    poi_wuensche: ["fahrradladen", "verleih"].filter(k => kategorien.includes(k)).map(kategorie => ({kategorie})),
+    bahnhoefe_zeigen: kategorien.includes("bahnhof"),
+    nur_variante: 0,
+  });
+} else {
+  (async () => { for (const q of urlParams.getAll("q")) await send(q); })();
+}
 
 // ---------- Spracheingabe: lokal mit Whisper (POST /api/sprache) – das Audio verlässt den Rechner nicht
 // Während der Aufnahme wird alle ~2,5 s der bisherige Mitschnitt erkannt (Text erscheint fast live),

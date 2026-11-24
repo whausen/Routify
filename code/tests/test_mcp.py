@@ -3,6 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF, SKOS
@@ -70,6 +71,10 @@ class RoutifyMcpTest(unittest.TestCase):
             self.assertFalse(result.get("isError"), result)
             data = result["structuredContent"]
             self.assertEqual(data["status"], "ok", data)
+            query = parse_qs(urlsplit(data["routify_url"]).query)
+            self.assertEqual(query["start"], ["Mainz"])
+            self.assertEqual(query["ziel"], ["Budenheim"])
+            self.assertEqual(query["poi"], ["bahnhof", "verleih"])
             self.assertEqual(data["route"]["geometrie"]["coordinates"][0], [8.27, 49.99])
             self.assertEqual([p["kategorie"] for p in data["poi"]], ["bahnhof", "verleih"])
             self.assertGreater(len(Graph().parse(data=data["turtle"], format="turtle")), 0)
