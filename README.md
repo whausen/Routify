@@ -184,3 +184,39 @@ data/                           aufbereitete Daten; große Dateien werden beim e
 
 Code: [MIT](LICENSE). Die Daten haben eigene Lizenzen (OpenStreetMap: ODbL, BKG POI-Open: dl-de/by-2.0, Wikidata: CC0),
 siehe [data/README.md](data/README.md). Mitgelieferte Bibliotheken: [code/frontend/static/vendor/README.md](code/frontend/static/vendor/README.md).
+
+## MCP für KI-Assistenten
+
+Der MCP-Dienst nutzt dieselbe Planungslogik und denselben BRouter wie die Web-App.
+Strukturierte Tool-Aufrufe überspringen die Ollama-Auswertung. Der Dienst läuft
+als separater Prozess in der vorhandenen Backend-Umgebung.
+
+```sh
+.venv/bin/python -m pip install -r requirements-mcp.txt
+.venv/bin/python -m uvicorn mcp_server:app --app-dir code/backend --host 127.0.0.1 --port 8103
+```
+
+Den MCP-Client per Streamable HTTP mit `http://127.0.0.1:8103/mcp` verbinden.
+Für DEV kann der Reverse Proxy den exakten Pfad `/mcp` an diesen Prozess
+weiterleiten. Bei weitergereichtem öffentlichem Host-Header
+`ROUTIFY_MCP_ALLOWED_HOSTS=routify-dev.hack4gdi.de` setzen. Bei Browser-Clients
+mit Origin-Header müssen die erlaubten Origins in
+`ROUTIFY_MCP_ALLOWED_ORIGINS` stehen (durch Leerzeichen getrennt).
+
+Aufruf des Tools `fahrradroute_berechnen` mit Beispielparametern:
+
+```json
+{
+  "start": "Mainz",
+  "ziel": "Bingen am Rhein",
+  "profil": "trekking",
+  "poi_kategorien": ["fahrradladen", "bahnhof"],
+  "rdf": true
+}
+```
+
+Das Ergebnis enthält Distanz, geschätzte Fahrzeit, GeoJSON-Geometrie und
+gewünschte POI-Vorschläge mit ihrem Abstand zur Route. Mit `rdf: true` kommt
+die Tour zusätzlich als Turtle zurück. Die bestehende Routify-Ontologie
+inklusive SKOS-Kategorien ist über `resources/read` mit der URI
+`https://w3id.org/routify/ontologie` abrufbar.

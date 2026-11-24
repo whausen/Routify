@@ -149,3 +149,27 @@ rtf:ds_poi_open a rtf:Datensatz ; dct:title "BKG POI-Open (Haltestellen)" ; dct:
 rtf:ds_osm a rtf:Datensatz ; dct:title "OpenStreetMap" ; dct:license <https://opendatacommons.org/licenses/odbl/> .
 rtf:ds_dwd a rtf:Datensatz ; dct:title "DWD-Vorhersage (MOSMIX) via Bright Sky" ; dct:publisher "Deutscher Wetterdienst" .
 rtf:ds_brouter a rtf:Datensatz ; dct:title "BRouter-Routinggraph (OpenStreetMap, Höhen aus SRTM)" ; dct:license <https://opendatacommons.org/licenses/odbl/> .
+
+# ----------------------------------------------------------------------------- Kategorien für die MCP-POI-Suche
+
+rtf:PoiKategorien a skos:ConceptScheme ;
+    skos:prefLabel "Routify-Kategorien für Orte entlang der Route"@de .
+
+rtf:FahrradwerkstattKategorie a skos:Concept ;
+    skos:inScheme rtf:PoiKategorien ;
+    skos:notation "fahrradladen" ;
+    skos:prefLabel "Fahrradwerkstatt"@de ;
+    skos:altLabel "Reparaturstation"@de ;
+    rdfs:seeAlso rtf:Fahrradservice .
+
+rtf:FahrradverleihKategorie a skos:Concept ;
+    skos:inScheme rtf:PoiKategorien ;
+    skos:notation "verleih" ;
+    skos:prefLabel "Fahrradverleih"@de ;
+    rdfs:seeAlso rtf:Fahrradservice .
+
+rtf:BahnhofKategorie a skos:Concept ;
+    skos:inScheme rtf:PoiKategorien ;
+    skos:notation "bahnhof" ;
+    skos:prefLabel "Bahnhof"@de ;
+    rdfs:seeAlso rtf:Bahnhof .

@@ -57,9 +57,9 @@ def _norm_ort(n):
     return (n or "").split(",")[0].strip().lower()
 
 
-async def planen(req: PlanRequest, request: Request):
+async def planen(req: PlanRequest, request: Request | None = None):
     """Komplette Planung einer Anfrage (wird von POST /api/plan aufgerufen)."""
-    ich = konto.nutzer(request.cookies.get(konto.COOKIE))
+    ich = konto.nutzer(request.cookies.get(konto.COOKIE)) if request is not None else None
     hinweise = []
     zeiten, _t = {}, [time.perf_counter()]
 
@@ -99,14 +99,15 @@ async def planen(req: PlanRequest, request: Request):
         rest = await asyncio.gather(*(geocode(client, n, near=start_pt, bezugsort=names[0]) for n in names[1:])) \
             if start_pt else [None] * (len(names) - 1)
         points = [start_pt, *rest]
-        for pt in points[1:-1]:
-            pt["typ"] = "ort"
         if any(pt and pt.get("offline") for pt in points):
             hinweise.append("Die Online-Ortssuche war nicht erreichbar – Orte stammen aus dem eigenen Verzeichnis "
                             "(Ortsmitte, etwas ungenauer).")
         missing = [n for n, p in zip(names, points) if p is None]
         if missing:
             return {"params": params, "rueckfrage": f"Diese Orte habe ich nicht gefunden: {', '.join(missing)}"}
+
+        for pt in points[1:-1]:
+            pt["typ"] = "ort"
 
         # Wunsch-POIs: konkrete Namen und bereits ausgewählte POIs werden Zwischenstopps
         vias, offene_wuensche = [], []

@@ -1,0 +1,2 @@
+# Zusatzabhängigkeit für den separat gestarteten MCP-Server
+mcp==1.26.0
