@@ -1,6 +1,7 @@
 """Separater MCP-Dienst für die strukturierte Routify-Planung."""
 import json
 import os
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlencode
 
@@ -13,6 +14,8 @@ import linked_data
 from planung import PlanRequest, planen
 from routing import PROFILE_ERLAUBT, VORLIEBE_PARAMETER
 
+KARTE_URI = "ui://routify/route-map.html"
+KARTE_DATEI = Path(__file__).with_name("mcp_route_map.html")
 ONTOLOGIE_URI = "https://w3id.org/routify/ontologie"
 POI_BEGRIFFE = {
     "fahrradladen": str(linked_data.RTF.FahrradwerkstattKategorie),
@@ -87,7 +90,27 @@ def ontologie() -> str:
     return linked_data.ONTO_DATEI.read_text(encoding="utf-8")
 
 
-@mcp.tool()
+@mcp.resource(
+    KARTE_URI,
+    name="Routify-Karte",
+    mime_type="text/html;profile=mcp-app",
+    meta={
+        "ui": {
+            "csp": {
+                "resourceDomains": [
+                    "https://cdn.jsdelivr.net",
+                    "https://sgx.geodatenzentrum.de",
+                ],
+            },
+        },
+    },
+)
+def routenkarte() -> str:
+    """Interaktive Karte für das Ergebnis der Routenberechnung."""
+    return KARTE_DATEI.read_text(encoding="utf-8")
+
+
+@mcp.tool(meta={"ui": {"resourceUri": KARTE_URI}})
 async def fahrradroute_berechnen(
     start: Ort,
     ziel: Ort,
