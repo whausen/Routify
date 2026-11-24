@@ -110,7 +110,10 @@ def routenkarte() -> str:
     return KARTE_DATEI.read_text(encoding="utf-8")
 
 
-@mcp.tool(meta={"ui": {"resourceUri": KARTE_URI}})
+@mcp.tool(meta={
+    "ui": {"resourceUri": KARTE_URI},
+    "openai/outputTemplate": KARTE_URI,
+})
 async def fahrradroute_berechnen(
     start: Ort,
     ziel: Ort,
