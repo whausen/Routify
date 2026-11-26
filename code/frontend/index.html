@@ -19,7 +19,8 @@
     <div class="src" style="margin:-4px 0 10px">Zum Speichern von Touren, Voreinstellungen und Verlauf. Planen geht auch ohne Konto.</div>
     <label>Name<input id="lgName" autocomplete="username" required minlength="2" maxlength="40"></label>
     <label>Passwort<input id="lgPw" type="password" autocomplete="current-password" required minlength="6"></label>
-    <div class="err" id="lgFehler"></div>
+    <div id="lgCaptcha"></div>
+    <div class="err" id="lgFehler" role="status"></div>
     <div class="mbtns">
       <button type="submit" class="go" data-aktion="anmelden">Anmelden</button>
       <button type="button" class="go zwei" id="lgReg">Neu registrieren</button>

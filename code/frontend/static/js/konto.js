@@ -16,10 +16,63 @@ function kontoKnopf() {
 function loginZeigen(hinweis) {
   $("lgFehler").textContent = hinweis || "";
   $("loginModal").hidden = false;
+  kontoCaptchaLaden().catch(() => {
+    $("lgFehler").textContent = "Die Sicherheitsprüfung konnte nicht geladen werden.";
+  });
   setTimeout(() => $("lgName").focus(), 50);
 }
+let kontoCaptchaInitialisierung, kontoCaptchaWidget;
+function kontoCaptchaLaden() {
+  kontoCaptchaInitialisierung ??= (async () => {
+    const cfg = await api("/api/config");
+    if (!cfg.ok) throw new Error("Kontoeinstellungen konnten nicht geladen werden");
+    if (!cfg.turnstile_site_key) return;
+    if (!window.turnstile) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+        script.onload = resolve;
+        script.onerror = () => { script.remove(); reject(new Error("CAPTCHA-Skript nicht verfügbar")); };
+        document.head.append(script);
+      });
+    }
+    await new Promise(resolve => window.turnstile.ready(resolve));
+    kontoCaptchaWidget = window.turnstile.render("#lgCaptcha", {
+      sitekey: cfg.turnstile_site_key,
+      action: "konto",
+      size: "flexible",
+    });
+  })().catch(error => {
+    kontoCaptchaInitialisierung = undefined;
+    throw error;
+  });
+  return kontoCaptchaInitialisierung;
+}
+
+let kontoAnfrageLaeuft = false;
 async function loginAusfuehren(aktion) {
-  const r = await api(`/api/konto/${aktion}`, "POST", { name: $("lgName").value, passwort: $("lgPw").value });
+  if (kontoAnfrageLaeuft) return;
+  kontoAnfrageLaeuft = true;
+  let r;
+  let captchaGesendet = false;
+  try {
+    await kontoCaptchaLaden();
+    const captcha = kontoCaptchaWidget === undefined ? "" : window.turnstile.getResponse(kontoCaptchaWidget);
+    if (kontoCaptchaWidget !== undefined && !captcha) {
+      $("lgFehler").textContent = "Bitte schließe zuerst die Sicherheitsprüfung ab.";
+      return;
+    }
+    captchaGesendet = !!captcha;
+    r = await api(`/api/konto/${aktion}`, "POST", {
+      name: $("lgName").value, passwort: $("lgPw").value, captcha_token: captcha,
+    });
+  } catch {
+    $("lgFehler").textContent = "Die Kontoanfrage ist fehlgeschlagen. Bitte versuche es erneut.";
+    return;
+  } finally {
+    kontoAnfrageLaeuft = false;
+    if (captchaGesendet) window.turnstile.reset(kontoCaptchaWidget);
+  }
   if (!r.ok) { $("lgFehler").textContent = r.fehler || "Das hat nicht geklappt."; return; }
   ich = { name: r.name, voreinst: r.voreinst || {} };
   $("loginModal").hidden = true; $("lgPw").value = "";

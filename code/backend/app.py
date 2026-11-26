@@ -21,7 +21,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # konfig zuerst: lädt .env, bevor andere Module Einstellungen lesen
@@ -93,6 +93,7 @@ async def sprache_erkennen(request: Request):
 async def config():
     # Nur Keys, die ohnehin im Browser landen (Kartenkacheln). Nie LLM-Keys o. Ä. hier ausgeben.
     return {"thunderforest_key": os.getenv("THUNDERFOREST_KEY") or None,
+            "turnstile_site_key": TURNSTILE_SITE_KEY or None,
             "strassenfotos": strassenfotos.aktiv()}  # Mapillary-Token bleibt auf dem Server
 
 
@@ -109,10 +110,42 @@ def _mit_cookie(antwort, token):
 class KontoDaten(BaseModel):
     name: str
     passwort: str
+    captcha_token: str = Field(default="", max_length=2048)
+
+
+TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "").strip()
+TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+TURNSTILE_HOSTNAME = os.getenv("TURNSTILE_HOSTNAME", "").strip()
+
+
+async def konto_captcha(token: str):
+    if not any((TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY, TURNSTILE_HOSTNAME)):
+        return None
+    nicht_verfuegbar = {"fehler": "Die Sicherheitsprüfung ist derzeit nicht verfügbar."}
+    if not all((TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY, TURNSTILE_HOSTNAME)):
+        return JSONResponse(nicht_verfuegbar, 503)
+    if token:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                antwort = await client.post(
+                    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                    data={"secret": TURNSTILE_SECRET_KEY, "response": token},
+                )
+                antwort.raise_for_status()
+                ergebnis = antwort.json()
+        except (httpx.HTTPError, ValueError):
+            return JSONResponse(nicht_verfuegbar, 503)
+        if (ergebnis.get("success") is True
+                and ergebnis.get("hostname") == TURNSTILE_HOSTNAME
+                and ergebnis.get("action") == "konto"):
+            return None
+    return JSONResponse({"fehler": "Bitte wiederhole die Sicherheitsprüfung."}, 400)
 
 
 @app.post("/api/konto/registrieren")
 async def konto_registrieren(d: KontoDaten):
+    if fehler := await konto_captcha(d.captcha_token):
+        return fehler
     try:
         token = konto.registrieren(d.name, d.passwort)
     except ValueError as e:
@@ -122,6 +155,8 @@ async def konto_registrieren(d: KontoDaten):
 
 @app.post("/api/konto/anmelden")
 async def konto_anmelden(d: KontoDaten):
+    if fehler := await konto_captcha(d.captcha_token):
+        return fehler
     try:
         token = konto.anmelden(d.name, d.passwort)
     except ValueError as e:
