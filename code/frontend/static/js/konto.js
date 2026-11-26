@@ -36,7 +36,6 @@ function kontoCaptchaLaden() {
         document.head.append(script);
       });
     }
-    await new Promise(resolve => window.turnstile.ready(resolve));
     kontoCaptchaWidget = window.turnstile.render("#lgCaptcha", {
       sitekey: cfg.turnstile_site_key,
       action: "konto",
