@@ -26,6 +26,22 @@ const BASIS = [
 let basisAktiv = null;
 // Standard ist die Fahrradkarte; die anderen Karten sind wählbar, werden aber nicht gemerkt.
 const STANDARDKARTE = "Fahrradkarte";
+const ERSATZKARTE = "Amtlich";
+const KACHEL_TIMEOUT_MS = 5000;
+const fahrradLayer = BASIS[0].layer;
+let kachelTimeout;
+
+function stoppeKachelpruefung() {
+  clearTimeout(kachelTimeout);
+}
+
+fahrradLayer.on("loading", () => {
+  stoppeKachelpruefung();
+  kachelTimeout = setTimeout(() => {
+    if (basisAktiv?.layer === fahrradLayer) setBasis(ERSATZKARTE);
+  }, KACHEL_TIMEOUT_MS);
+});
+fahrradLayer.on("tileload remove", stoppeKachelpruefung);
 
 function setBasis(name) {
   const b = BASIS.find(x => x.name === name) || BASIS[0];
