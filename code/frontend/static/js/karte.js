@@ -26,8 +26,8 @@ const BASIS = [
 let basisAktiv = null;
 // Standard ist die Fahrradkarte; die anderen Karten sind wählbar, werden aber nicht gemerkt.
 const STANDARDKARTE = "Fahrradkarte";
-const ERSATZKARTE = "Amtlich";
-const KACHEL_TIMEOUT_MS = 2000;
+const ERSATZKARTE = "Amtlich grau";
+const KACHEL_TIMEOUT_MS = 1000;
 const fahrradLayer = BASIS[0].layer;
 let kachelTimeout;
 
